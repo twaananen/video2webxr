@@ -365,9 +365,17 @@ export class VRControls {
 
     setSettingsPage(page) {
         this.settingsPage = page;
-        this.canvas.height = page === null ? CANVAS_H : 720;
-        this.panel.geometry.dispose();
-        this.panel.geometry = new THREE.PlaneGeometry(PANEL_WIDTH, (PANEL_WIDTH * this.canvas.height) / CANVAS_W);
+        const height = page === null ? CANVAS_H : 720;
+        if (this.canvas.height !== height) {
+            this.canvas.height = height;
+            // Uploaded textures have fixed GPU storage; recreate it when the canvas changes size.
+            this.texture.dispose();
+            this.texture = new THREE.CanvasTexture(this.canvas);
+            this.texture.colorSpace = THREE.SRGBColorSpace;
+            this.panel.material.map = this.texture;
+            this.panel.geometry.dispose();
+            this.panel.geometry = new THREE.PlaneGeometry(PANEL_WIDTH, (PANEL_WIDTH * height) / CANVAS_W);
+        }
         this.drawnState = null;
     }
 

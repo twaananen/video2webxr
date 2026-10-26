@@ -154,6 +154,8 @@ async function setup() {
         player.vrControls.draw();
         document.getElementById('vr-preview').src = player.vrControls.canvas.toDataURL();
         player.vrControls.setSettingsPage(null);
+        await window.fixture.runPanelTransitions();
+        results.push('GPU panel: repeated settings open, tab changes and close verified');
         document.getElementById('result').textContent = results.join('\n');
         return results;
     }
@@ -163,6 +165,36 @@ async function setup() {
         source,
         runChecks,
         pixel,
+        async runPanelTransitions() {
+            const controls = player.vrControls;
+            const gl = player.renderer.getContext();
+            const visible = controls.panel.visible;
+            const culled = controls.panel.frustumCulled;
+            const page = controls.settingsPage;
+            const results = [];
+            controls.panel.visible = true;
+            controls.panel.frustumCulled = false;
+            try {
+                for (let cycle = 0; cycle < 3; cycle++) {
+                    for (const action of ['done', 'settings', 'tab:1', 'tab:2', 'done']) {
+                        controls.activate(action);
+                        controls.draw();
+                        const session = player.renderer.xr.getSession();
+                        if (session) await new Promise((resolve) => session.requestAnimationFrame(resolve));
+                        else player.render();
+                        assert(gl.getError() === gl.NO_ERROR, `GPU error after ${action}, cycle ${cycle}`);
+                        assert(!gl.isContextLost(), 'Panel transition lost the GPU context');
+                        assert(controls.panel.material.map === controls.texture, 'Panel uses a stale texture');
+                        results.push({ cycle, action, height: controls.canvas.height });
+                    }
+                }
+                return results;
+            } finally {
+                controls.setSettingsPage(page);
+                controls.panel.visible = visible;
+                controls.panel.frustumCulled = culled;
+            }
+        },
         async loadVideo(name) {
             assert(/^synthetic-(4k|8k)-(h264|hevc)\.mp4$/.test(name), 'Unknown synthetic clip');
             clearInterval(interval);

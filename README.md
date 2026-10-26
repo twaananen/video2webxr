@@ -178,6 +178,8 @@ node scripts/test-server.mjs  # loopback-only http://127.0.0.1:8818
 The synthetic browser fixture checks real video textures and pixels for all nine
 projections, color preservation, effects, stereo eye isolation/swap, FOV, VR panel
 navigation/disabled controls, original comparison and storage round trips/errors.
+It also renders the visible panel through repeated playback/settings transitions
+and checks GPU errors, covering texture reallocation when the panel changes size.
 It uses local generated media, not personal content. It also exposes a synchronized
 wall-time benchmark; its tiny source and timer precision do not establish smooth
 playback for high-resolution compressed video.
