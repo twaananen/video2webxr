@@ -18,6 +18,9 @@ createServer(async (request, response) => {
         } else if (request.url === '/') {
             response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
             response.end(await readFile(new URL('../test/browser.html', import.meta.url)));
+        } else if (/^\/media\/synthetic-(4k|8k)-(h264|hevc)\.mp4$/.test(request.url)) {
+            response.writeHead(200, { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store' });
+            response.end(await readFile(new URL(`../test${request.url}`, import.meta.url)));
         } else {
             response.writeHead(404);
             response.end();

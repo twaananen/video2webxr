@@ -5,6 +5,10 @@ research plan, not a list of implemented features or promised upstream releases.
 The installed extension, browser flags and headset settings were not changed
 during this investigation.
 
+[Follow-up measurements on 2026-10-27](rendering-investigation-2026-10-27.md)
+confirm working per-app overrides, native hardware decoding and offscreen
+MSAA/SMAA support, with explicit performance and viewing limitations.
+
 ## What is actually limited
 
 The path is website video → browser decoder → video texture → our WebGL scene

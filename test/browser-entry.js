@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { DEFAULT_SETTINGS } from '../src/player-settings.js';
 import { PROJECTIONS, VRPlayer } from '../src/vr-player.js';
 
@@ -160,6 +163,187 @@ async function setup() {
         source,
         runChecks,
         pixel,
+        async loadVideo(name) {
+            assert(/^synthetic-(4k|8k)-(h264|hevc)\.mp4$/.test(name), 'Unknown synthetic clip');
+            clearInterval(interval);
+            video.srcObject?.getTracks().forEach((track) => {
+                track.stop();
+            });
+            video.srcObject = null;
+            video.pause();
+            const response = await fetch(`/media/${name}`);
+            assert(response.ok, 'Synthetic clip is missing');
+            const data = await response.blob();
+            if (video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
+            video.src = URL.createObjectURL(data);
+            video.loop = true;
+            await video.play();
+            return { width: video.videoWidth, height: video.videoHeight, bytes: data.size };
+        },
+        async measurePlayback(seconds = 10) {
+            assert(seconds > 0 && seconds <= 30, 'Invalid observation duration');
+            const start = video.getVideoPlaybackQuality();
+            const began = performance.now();
+            let callbacks = 0,
+                waiting = 0;
+            const onWaiting = () => waiting++;
+            const render = player.render;
+            player.render = function () {
+                callbacks++;
+                return render.call(this);
+            };
+            video.addEventListener('waiting', onWaiting);
+            try {
+                await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+            } finally {
+                player.render = render;
+                video.removeEventListener('waiting', onWaiting);
+            }
+            const end = video.getVideoPlaybackQuality();
+            const elapsedSeconds = (performance.now() - began) / 1000;
+            return {
+                elapsedSeconds,
+                renderCallbacksPerSecond: callbacks / elapsedSeconds,
+                frames: end.totalVideoFrames - start.totalVideoFrames,
+                dropped: end.droppedVideoFrames - start.droppedVideoFrames,
+                waiting,
+                bufferedEnd: video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0,
+                duration: video.duration,
+                source: [video.videoWidth, video.videoHeight],
+                xrVisibility: player.renderer.xr.getSession()?.visibilityState ?? null,
+                xrFps: player.stats.xrFps,
+            };
+        },
+        async compareSmoothing() {
+            // This benchmark stops the animation loop; reload the fixture before further XR tests.
+            assert(!player.renderer.xr.isPresenting, 'End XR before the offscreen experiment');
+            const renderer = player.renderer;
+            const gl = renderer.getContext();
+            const size = renderer.getSize(new THREE.Vector2());
+            const ratio = renderer.getPixelRatio();
+            const camera = player.camera.clone();
+            const projection = player.projection;
+            const playing = !video.paused;
+            video.pause();
+            renderer.setAnimationLoop(null);
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const results = [];
+            try {
+                renderer.setPixelRatio(1);
+                player.camera.position.set(0, 0, 0);
+                player.camera.quaternion.identity();
+                player.camera.aspect = 1;
+                player.camera.updateProjectionMatrix();
+                player.setProjection('360');
+                for (const width of [1728, 2160]) {
+                    renderer.setSize(width, width);
+                    let originalPixels;
+                    for (const mode of ['original', 'msaa4', 'smaa']) {
+                        const target = new THREE.WebGLRenderTarget(width, width, {
+                            samples: mode === 'msaa4' ? Math.min(4, gl.getParameter(gl.MAX_SAMPLES)) : 0,
+                        });
+                        const composer = new EffectComposer(renderer, target);
+                        composer.renderToScreen = false;
+                        composer.addPass(new RenderPass(player.scene, player.camera));
+                        const smaa = mode === 'smaa' ? new SMAAPass() : null;
+                        if (smaa) composer.addPass(smaa);
+                        try {
+                            // SMAA lookup images load asynchronously before their first upload.
+                            if (smaa) await new Promise((resolve) => setTimeout(resolve, 100));
+                            for (let i = 0; i < 5; i++) composer.render();
+                            gl.finish();
+                            const samples = [];
+                            const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+                            const queries = [];
+                            for (let i = 0; i < 20; i++) {
+                                const query = timer ? gl.createQuery() : null;
+                                if (query) gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
+                                const began = performance.now();
+                                composer.render();
+                                if (query) {
+                                    gl.endQuery(timer.TIME_ELAPSED_EXT);
+                                    queries.push(query);
+                                }
+                                gl.finish();
+                                samples.push(performance.now() - began);
+                            }
+                            const deadline = performance.now() + 1000;
+                            while (
+                                queries.some((query) => !gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)) &&
+                                performance.now() < deadline
+                            ) {
+                                await new Promise((resolve) => setTimeout(resolve, 10));
+                            }
+                            const gpu = [];
+                            for (const query of queries) {
+                                if (
+                                    !gl.getParameter(timer.GPU_DISJOINT_EXT) &&
+                                    gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)
+                                ) {
+                                    gpu.push(gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6);
+                                }
+                                gl.deleteQuery(query);
+                            }
+                            assert(gl.getError() === gl.NO_ERROR, `${mode} produced a GPU error`);
+                            assert(!gl.isContextLost(), 'GPU context lost during smoothing experiment');
+                            const pixels = new Uint8Array(width * width * 4);
+                            renderer.readRenderTargetPixels(composer.readBuffer, 0, 0, width, width, pixels);
+                            let low = 255,
+                                high = 0;
+                            for (let i = 0; i < pixels.length; i += 1024) {
+                                low = Math.min(low, pixels[i]);
+                                high = Math.max(high, pixels[i]);
+                            }
+                            assert(high - low > 20, `${mode} did not render the detailed test image: ${low}..${high}`);
+                            let changed = 0,
+                                maxDelta = 0;
+                            if (mode === 'original') originalPixels = pixels;
+                            else
+                                for (let i = 0; i < pixels.length; i += 4) {
+                                    const delta = Math.max(
+                                        Math.abs(pixels[i] - originalPixels[i]),
+                                        Math.abs(pixels[i + 1] - originalPixels[i + 1]),
+                                        Math.abs(pixels[i + 2] - originalPixels[i + 2]),
+                                    );
+                                    if (delta) changed++;
+                                    maxDelta = Math.max(maxDelta, delta);
+                                }
+                            if (mode === 'smaa') assert(changed > 0, 'SMAA did not change any test pixels');
+                            samples.sort((a, b) => a - b);
+                            gpu.sort((a, b) => a - b);
+                            results.push({
+                                width,
+                                mode,
+                                samples: target.samples,
+                                medianMs: samples[10],
+                                p95Ms: samples[18],
+                                gpuSamples: gpu.length,
+                                gpuMedianMs: gpu.length ? gpu[Math.floor(gpu.length / 2)] : null,
+                                gpuP95Ms: gpu.length ? gpu[Math.floor(gpu.length * 0.95)] : null,
+                                imageRange: [low, high],
+                                changedPercent: (100 * changed) / (width * width),
+                                maxDelta,
+                            });
+                        } finally {
+                            for (const pass of composer.passes) pass.dispose();
+                            composer.dispose();
+                        }
+                    }
+                }
+                return {
+                    maxSamples: gl.getParameter(gl.MAX_SAMPLES),
+                    kind: 'Paused synthetic video; one eye; synchronized offscreen render wall time; excludes decoding and XR compositor',
+                    results,
+                };
+            } finally {
+                renderer.setRenderTarget(null);
+                renderer.setPixelRatio(ratio);
+                renderer.setSize(size.x, size.y);
+                player.camera.copy(camera);
+                player.setProjection(projection);
+                if (playing) await video.play();
+            }
+        },
         async runStorageChecks() {
             if (!globalThis.chrome) globalThis.chrome = {};
             const chrome = globalThis.chrome;
@@ -257,9 +441,11 @@ async function setup() {
         dispose: async () => {
             clearInterval(interval);
             await player.dispose();
-            video.srcObject.getTracks().forEach((track) => {
+            video.srcObject?.getTracks().forEach((track) => {
                 track.stop();
             });
+            video.pause();
+            if (video.src.startsWith('blob:')) URL.revokeObjectURL(video.src);
         },
     };
     document.getElementById('checks').onclick = () =>
