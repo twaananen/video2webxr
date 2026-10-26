@@ -177,11 +177,25 @@ async function setup() {
             try {
                 for (let cycle = 0; cycle < 3; cycle++) {
                     for (const action of ['done', 'settings', 'tab:1', 'tab:2', 'done']) {
+                        const frame = player.renderer.info.render.frame;
                         controls.activate(action);
                         controls.draw();
                         const session = player.renderer.xr.getSession();
-                        if (session) await new Promise((resolve) => session.requestAnimationFrame(resolve));
-                        else player.render();
+                        if (session) {
+                            await new Promise((resolve, reject) => {
+                                const timer = setTimeout(
+                                    () => reject(new Error('XR panel check received no frame')),
+                                    3000,
+                                );
+                                session.requestAnimationFrame(() =>
+                                    session.requestAnimationFrame(() => {
+                                        clearTimeout(timer);
+                                        resolve();
+                                    }),
+                                );
+                            });
+                        } else player.render();
+                        assert(player.renderer.info.render.frame > frame, `Rendering stopped after ${action}`);
                         assert(gl.getError() === gl.NO_ERROR, `GPU error after ${action}, cycle ${cycle}`);
                         assert(!gl.isContextLost(), 'Panel transition lost the GPU context');
                         assert(controls.panel.material.map === controls.texture, 'Panel uses a stale texture');

@@ -137,6 +137,25 @@ required. The 8K H.264 offscreen rendering probe also passed: 60 frames in
 The normal Vulkan injection layer worked in this probe; no disabling workaround
 was applied. Full in-headset UI and playback still need a viewing check.
 
+## Follow-up: VR settings panel freeze
+
+Opening the larger settings panel reproduced `GL_INVALID_VALUE` (1281): the
+canvas grew from 336 to 720 pixels high after its GPU texture had been allocated.
+The original interaction checks did not render this transition. The fix
+recreates the texture when dimensions change and retains it for same-sized tab
+changes. Core fix: `b7b0204`.
+
+The regression now renders the visible panel through three complete
+playback/settings/tab/close cycles, checks for GPU errors/context loss, and
+requires rendering to advance. It passed both on desktop and in Frame's native
+XR session, including 15 transition actions with no GL error. The installed
+build is labelled `2.2.0 + Frame quality and comfort (panel fix)`; all 13 managed
+files matched the production build's hashes. The enabled local extension was
+reloaded and its build label verified, then Chrome XR was restarted without
+debugging flags. The preceding build is retained in
+`~/.local/share/video2webxr-frame-before-panel-fix-20261027`. Subjective viewing
+and controller pointing remain physical checks.
+
 ## Reproduction and cleanup
 
 The loopback test server now serves only the specifically named synthetic clips
