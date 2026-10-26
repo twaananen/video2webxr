@@ -101,6 +101,87 @@ If clicking the video doesn't enter VR, close other browser windows that use the
 If you don't see the white cardboard icon in the bottom right hand corner of a YouTube video then the extension is not installed or disabled
 
 ### Development
+#### Frame quality and comfort branch
+
+This local branch keeps the XR-only GPU flush and adds **Quality & comfort** to
+the page controls and the controller-operated VR panel. The upstream flush PR
+remains separate. No new runtime dependency is needed.
+
+- Picture: bounded five-tap sharpening, brightness, contrast and saturation.
+  **Original picture** compares against neutral processing without changing stereo
+  alignment. Sharpening stays off by default; neutral color values preserve the
+  source. Sampling is clamped to each eye/cubemap face to avoid neighboring-image
+  bleed. EAC now uses the same sRGB decode/output conversion as the other modes.
+- Rendering: recommended resolution by default, optional requested render scale,
+  peripheral detail and cadence matching where the runtime exposes them. Resolution
+  applies on the next VR entry and the browser can cap it. Diagnostics show actual
+  dimensions, antialiasing, approximate presented video fps, dropped video frames,
+  XR callbacks and CPU render time. CPU timing is not a GPU or display measurement.
+- Comfort: neutral eye alignment, eye swap for reversed footage, small stereo
+  depth/vertical corrections and VR180 FOV calibration. **Follow my gaze** plus
+  **Recenter** supports reclined viewing; level recentering remains the default.
+  These controls do not change headset optics, physical IPD or binocular overlap.
+- **Save for this video** stores settings and the projection locally in extension
+  storage; **Reset** removes that profile and restores neutral values. Nothing is
+  synchronized or sent to a server. The `storage` permission is used for these
+  explicit saves. Generic sites are identified by origin/path; YouTube also keeps
+  only its video ID. Signed URL parameters and fragments are excluded. Generic
+  sites that select multiple videos on one URL share that page's profile.
+- Unsupported controls are disabled after a session checks the runtime. The page
+  dialog has native labels, keyboard controls, a focus indicator and Escape/Done;
+  the VR panel has separate Picture, Rendering and Comfort tabs with large hit
+  targets. Effects and alignment are bounded and saved input is validated.
+
+Research and decisions:
+
+- Source quality remains the website's choice; diagnostics show the actual decoded
+  resolution and dropped-frame counter. YouTube's [public player API](https://developers.google.com/youtube/iframe_api_reference)
+  no longer supports playback-quality setters. This branch does not rely on an
+  undocumented source-selector API or claim to enable hardware decoding.
+- [Three.js XR controls](https://threejs.org/docs/pages/WebXRManager) require render
+  scale to be set before entry and describe optional foveation. We request AA,
+  report what is granted, and preserve runtime defaults instead of forcing cost.
+- [Video-frame callbacks](https://developer.chrome.com/blog/requestvideoframecallback-rvfc)
+  and playback-quality counters provide timing/drop observations. They do not
+  establish hardware decoding or a headset's physical refresh rate. Cadence
+  selection only requests advertised rates with an approximately integral ratio
+  to a stable video estimate; it never invents motion-interpolated video frames.
+- [WebXR frame-rate control](https://immersive-web.github.io/webxr/) is optional.
+  Reprojection belongs to the compositor; this extension does not override it.
+- [Composition layers](https://immersive-web.github.io/layers/) can avoid an extra
+  sampling pass. On this Frame/Chrome combination, `layers` was not granted and
+  `XRMediaBinding` was absent. Keep the working legacy layer path rather than
+  exposing an experimental switch that cannot work on this runtime.
+- [HereSphere's calibration features](https://store.steampowered.com/app/1234730/HereSphere/)
+  informed alignment and FOV controls. Its depth-estimation/autofocus and synthetic
+  6DoF reconstruction need a separate algorithm; this implementation does not
+  claim to recover missing viewpoints or change optical focus.
+- [Adaptive sharpening research](https://gpuopen.com/fidelityfx-cas/) supports a
+  restrained, bounded approach. Our small five-tap filter is not AMD CAS or AI
+  upscaling and makes no claim to reconstruct lost source detail.
+
+Automated verification:
+
+```
+npm test
+npm run check
+npm run build
+node scripts/test-server.mjs  # loopback-only http://127.0.0.1:8818
+```
+
+The synthetic browser fixture checks real video textures and pixels for all nine
+projections, color preservation, effects, stereo eye isolation/swap, FOV, VR panel
+navigation/disabled controls, original comparison and storage round trips/errors.
+It uses local generated media, not personal content. It also exposes a synchronized
+wall-time benchmark; its tiny source and timer precision do not establish smooth
+playback for high-resolution compressed video.
+
+On Frame's Chrome 157 / SteamOS 0.4.5, native GPU pixel checks passed. Short native
+VR/AR entry/exit tests found a 3456×1728 recommended buffer, AA off, no advertised
+refresh rates and no fixed-foveation control. A request of 85% gave 2937×1468;
+115% remained capped at 3456×1728. The headset session was hidden/unworn, so these
+tests do not validate visible motion smoothness or subjective stereo comfort.
+
 Sources are in `src/`:
 - `youtube.js`: YouTube integration (the cardboard icon, projection detection)
 - `youtube-page.js`: runs in YouTube's own page context to read the player's data

@@ -66,7 +66,13 @@ observer.observe(document, { childList: true, subtree: true });
 function playerInfo() {
     let info = null;
     const onInfo = (event) => {
-        info = JSON.parse(event.detail);
+        try {
+            const value = JSON.parse(event.detail);
+            if (Array.isArray(value?.projections))
+                info = { projections: value.projections, partialSpherical: value.partialSpherical === true };
+        } catch {
+            /* Page metadata is optional and untrusted. */
+        }
     };
     document.addEventListener('video2webxr-info', onInfo);
     document.dispatchEvent(new CustomEvent('video2webxr-info-request'));
@@ -105,7 +111,7 @@ const STEREO_MAX_CHECKS = 60000 / STEREO_CHECK_MS;
 function detectStereo(vrPlayer, mono, votes = {}, attempt = 0) {
     const variants = STEREO_VARIANTS[mono];
     // stop once the player is gone or the user picked a projection themselves
-    if (!variants || player !== vrPlayer || vrPlayer.projection !== mono) return;
+    if (!variants || player !== vrPlayer || vrPlayer.projection !== mono || vrPlayer.hasSavedProjection) return;
     const adShowing = document.querySelector('#movie_player')?.classList.contains('ad-showing');
     if (!adShowing) {
         let vote = null;

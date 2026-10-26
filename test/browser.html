@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>video2webxr · quality checks</title>
+    <style>
+        body { margin:0; padding:28px; background:#101923; color:#e5edf5; font:16px/1.5 system-ui; }
+        main { max-width:1000px; margin:auto; } h1 { font-size:26px; margin:0; }
+        p { color:#bbcadb; } #view { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+        #view canvas { max-width:100%; height:auto; } video { width:240px; }
+        #controls { padding:16px 0; } #vr-preview { width:100%; max-width:850px; }
+        button { background:#30445a; color:white; border:1px solid #8faccc; border-radius:7px; padding:12px; cursor:pointer; }
+        :focus-visible { outline:3px solid #55b7ff; } pre { white-space:pre-wrap; }
+    </style>
+</head>
+<body><main>
+    <h1>Video quality & comfort checks</h1>
+    <p>Synthetic local video. No external media or saved browser data is used.</p>
+    <div id="view"></div><div id="controls"></div>
+    <button type="button" id="checks">Run rendering checks</button>
+    <pre id="result" role="status">Preparing video…</pre>
+    <h2>Controller panel preview</h2>
+    <img id="vr-preview" alt="Preview of the VR quality and comfort controls" />
+</main><script src="/bundle.js"></script></body>
+</html>

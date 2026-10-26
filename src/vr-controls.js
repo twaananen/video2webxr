@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SETTINGS, SETTINGS_PAGES, settingText, stepSetting } from './player-settings.js';
 import { PROJECTION_LABELS } from './projections.js';
 
 // In-VR controls: a laser from each controller, a panel with the video's controls, and
@@ -11,7 +12,7 @@ import { PROJECTION_LABELS } from './projections.js';
 
 // The panel is drawn into a canvas and shown on a plane PANEL_WIDTH metres wide
 const CANVAS_W = 1280;
-const CANVAS_H = 256;
+const CANVAS_H = 336;
 const PANEL_WIDTH = 1.0;
 const PANEL_HEIGHT = (PANEL_WIDTH * CANVAS_H) / CANVAS_W;
 const SKIP_SECONDS = 10;
@@ -46,6 +47,7 @@ const AREAS_WITH_PASSTHROUGH = {
     passthrough: { x: 984, y: ROW_BOTTOM, w: 88, h: ROW_HEIGHT },
     recenter: { x: 1080, y: ROW_BOTTOM, w: 88, h: ROW_HEIGHT },
     exit: { x: 1176, y: ROW_BOTTOM, w: 88, h: ROW_HEIGHT },
+    settings: { x: 464, y: 256, w: 352, h: 64 },
 };
 // Without passthrough (no AR session) the projection switcher takes the button's place
 const { passthrough: _, ...withoutPassthrough } = AREAS_WITH_PASSTHROUGH;
@@ -131,6 +133,7 @@ function formatTime(seconds) {
 export class VRControls {
     // player: the VRPlayer whose video, scene and screen these controls drive
     constructor(player) {
+        this.settingsPage = null;
         this.player = player;
         this.video = player.video;
         this.renderer = player.renderer;
@@ -260,7 +263,7 @@ export class VRControls {
     layoutHandles() {
         const panelScale = this.panel.scale.x;
         this.panelBar.scale.setScalar(1 / panelScale);
-        this.panelBar.position.set(0, -PANEL_HEIGHT / 2 - 0.04 / panelScale, 0.001);
+        this.panelBar.position.set(0, -this.panel.geometry.parameters.height / 2 - 0.04 / panelScale, 0.001);
 
         const flat = this.player.projection === 'FLAT';
         this.screenBar.visible = flat;
@@ -335,12 +338,37 @@ export class VRControls {
     // Canvas pixel under a laser hit on the panel
     panelPoint(hit) {
         if (!hit || hit.object !== this.panel || !hit.uv) return null;
-        return { x: hit.uv.x * CANVAS_W, y: (1 - hit.uv.y) * CANVAS_H };
+        return { x: hit.uv.x * CANVAS_W, y: (1 - hit.uv.y) * this.canvas.height };
     }
 
     // The panel's layout; the passthrough button only shows in sessions that can do it
     get areas() {
+        if (this.settingsPage !== null) {
+            const areas = {
+                done: { x: 992, y: 72, w: 256, h: 56 },
+                reset: { x: 32, y: 640, w: 240, h: 64 },
+                save: { x: 288, y: 640, w: 320, h: 64 },
+                compare: { x: 624, y: 640, w: 320, h: 64 },
+                recenter: { x: 960, y: 640, w: 288, h: 64 },
+            };
+            SETTINGS_PAGES.forEach((_page, i) => {
+                areas[`tab:${i}`] = { x: 32 + i * 320, y: 72, w: 304, h: 56 };
+            });
+            SETTINGS_PAGES[this.settingsPage].keys.forEach((key, i) => {
+                areas[`setting:${key}:-1`] = { x: 896, y: 148 + i * 76, w: 88, h: 64 };
+                areas[`setting:${key}:1`] = { x: 1160, y: 148 + i * 76, w: 88, h: 64 };
+            });
+            return areas;
+        }
         return this.player.passthroughAvailable ? AREAS_WITH_PASSTHROUGH : AREAS_WITHOUT_PASSTHROUGH;
+    }
+
+    setSettingsPage(page) {
+        this.settingsPage = page;
+        this.canvas.height = page === null ? CANVAS_H : 720;
+        this.panel.geometry.dispose();
+        this.panel.geometry = new THREE.PlaneGeometry(PANEL_WIDTH, (PANEL_WIDTH * this.canvas.height) / CANVAS_W);
+        this.drawnState = null;
     }
 
     areaAt(point) {
@@ -408,8 +436,33 @@ export class VRControls {
     }
 
     activate(area) {
+        if (area.startsWith('tab:')) {
+            this.setSettingsPage(Number(area.split(':')[1]));
+            return;
+        }
+        if (area.startsWith('setting:')) {
+            const [, key, direction] = area.split(':');
+            if (this.player.settingAvailable(key))
+                this.player.updateSetting(key, stepSetting(key, this.player.settings[key], Number(direction)));
+            return;
+        }
         const video = this.video;
         switch (area) {
+            case 'settings':
+                this.setSettingsPage(0);
+                break;
+            case 'done':
+                this.setSettingsPage(null);
+                break;
+            case 'reset':
+                this.player.resetSettings();
+                break;
+            case 'save':
+                this.player.saveSettings();
+                break;
+            case 'compare':
+                this.player.comparePicture();
+                break;
             case 'play':
                 if (video.paused) video.play().catch(() => {});
                 else video.pause();
@@ -537,6 +590,101 @@ export class VRControls {
         this.player.world.position.copy(position);
         this.player.world.rotation.set(0, yaw, 0);
         this.resetPanelPosition(position, yaw);
+        if (this.player.settings.reclined) {
+            const orientation = this.renderer.xr.getCamera().getWorldQuaternion(new THREE.Quaternion());
+            this.player.world.quaternion.copy(orientation);
+            this.player.screen.position.copy(position).add(new THREE.Vector3(0, 0, -3).applyQuaternion(orientation));
+            this.player.screen.quaternion.copy(orientation);
+            this.panel.position.copy(position).add(new THREE.Vector3(0, -0.3, -1).applyQuaternion(orientation));
+            this.panel.quaternion
+                .copy(orientation)
+                .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.2));
+        }
+    }
+
+    drawSettings(hovered) {
+        const now = performance.now();
+        if (!this.detailsTime || now - this.detailsTime > 1000) {
+            this.detailsTime = now;
+            this.details = this.player.diagnostics().slice(0, 2);
+        }
+        const state = JSON.stringify([
+            this.settingsPage,
+            this.player.settings,
+            this.player.projection,
+            this.player.comparing,
+            this.player.settingsMessage,
+            this.details,
+            [...hovered],
+        ]);
+        if (this.drawnState === state) return;
+        this.drawnState = state;
+        const c = this.context;
+        c.clearRect(0, 0, CANVAS_W, this.canvas.height);
+        c.fillStyle = THEME.panel;
+        c.beginPath();
+        c.roundRect(0, 0, CANVAS_W, this.canvas.height, 16);
+        c.fill();
+        const text = (value, x, y, size = 28, align = 'left', color = THEME.text) => {
+            c.font = `500 ${size}px ${THEME.font}`;
+            c.textAlign = align;
+            c.textBaseline = 'middle';
+            c.fillStyle = color;
+            c.fillText(value, x, y, align === 'center' ? 260 : CANVAS_W - x - 24);
+        };
+        const button = (name, title, active = false, disabled = false) => {
+            const { x, y, w, h } = this.areas[name];
+            c.globalAlpha = disabled ? 0.4 : 1;
+            c.fillStyle = active ? '#166aa4' : hovered.has(name) && !disabled ? THEME.focus : THEME.button;
+            c.beginPath();
+            c.roundRect(x, y, w, h, 8);
+            c.fill();
+            text(title, x + w / 2, y + h / 2, 26, 'center');
+            c.globalAlpha = 1;
+        };
+        text('Quality & comfort', 32, 36, 32);
+        SETTINGS_PAGES.forEach((page, i) => {
+            button(`tab:${i}`, page.title, i === this.settingsPage);
+        });
+        button('done', 'Done');
+        SETTINGS_PAGES[this.settingsPage].keys.forEach((key, i) => {
+            const y = 148 + i * 76;
+            const disabled = !this.player.settingAvailable(key);
+            text(SETTINGS[key].label, 40, y + 16, 27, 'left', disabled ? THEME.label : THEME.text);
+            const words = this.player.settingHelp(key).split(' ');
+            let line = '',
+                row = 0;
+            c.font = `500 19px ${THEME.font}`;
+            for (const word of words) {
+                if (c.measureText(`${line} ${word}`).width > 820 && line) {
+                    text(line, 40, y + 42 + row * 21, 19, 'left', THEME.label);
+                    line = '';
+                    row++;
+                }
+                line += `${line ? ' ' : ''}${word}`;
+            }
+            text(line, 40, y + 42 + row * 21, 19, 'left', THEME.label);
+            button(`setting:${key}:-1`, '−', false, disabled);
+            button(`setting:${key}:1`, '+', false, disabled);
+            text(settingText(key, this.player.settings[key]), 1072, y + 32, 22, 'center');
+        });
+        this.details.forEach((line, i) => {
+            text(line, 32, 562 + i * 26, 21, 'left', THEME.label);
+        });
+        text(
+            this.player.settingsMessage ||
+                'Changes preview immediately. Save only for videos that need their own settings.',
+            32,
+            612,
+            20,
+            'left',
+            THEME.label,
+        );
+        button('reset', 'Reset');
+        button('save', 'Save for video');
+        button('compare', this.player.comparing ? 'Original shown' : 'Original picture', this.player.comparing);
+        button('recenter', 'Recenter');
+        this.texture.needsUpdate = true;
     }
 
     // Styled after the Steam Frame UI: dark slate panel, a lighter button with a blue underline
@@ -546,6 +694,10 @@ export class VRControls {
         const hovered = new Set(
             this.controllers.map((c) => this.areaAt(this.panelPoint(c.userData.hover?.hit))).filter(Boolean),
         );
+        if (this.settingsPage !== null) {
+            this.drawSettings(hovered);
+            return;
+        }
         // only redraw when something visible changed
         const state = [
             Math.floor(video.currentTime),
@@ -765,6 +917,8 @@ export class VRControls {
             },
             { filled: true },
         );
+
+        iconButton('settings', () => text('Quality & comfort', 0, 0, { size: 27 }), { filled: true });
 
         this.texture.needsUpdate = true;
     }

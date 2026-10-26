@@ -4,6 +4,7 @@
     "description": "Watch YouTube 360°/VR180 videos and videos on other sites in a PC VR headset via WebXR",
     "main": "src/youtube.js",
     "scripts": {
+        "test": "node --test test/*.test.js",
         "build": "node scripts/build.mjs",
         "watch": "node scripts/build.mjs --watch",
         "check": "biome check .",
