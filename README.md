@@ -134,6 +134,9 @@ remains separate. No new runtime dependency is needed.
 
 Research and decisions:
 
+- [Rendering research and roadmap](docs/rendering-roadmap.md) distinguishes video
+  edge smoothing from MSAA, records native Frame capability checks, and separates
+  current experiments from browser and runtime dependencies.
 - Source quality remains the website's choice; diagnostics show the actual decoded
   resolution and dropped-frame counter. YouTube's [public player API](https://developers.google.com/youtube/iframe_api_reference)
   no longer supports playback-quality setters. This branch does not rely on an
