@@ -134,6 +134,8 @@ remains separate. No new runtime dependency is needed.
 
 Research and decisions:
 
+- [Project handoff, 2026-10-29](docs/handoff-2026-10-29.md) summarizes the installed
+  build, confirmed fixes, experiments, blockers and next steps.
 - [Rendering research and roadmap](docs/rendering-roadmap.md) distinguishes video
   edge smoothing from MSAA, records native Frame capability checks, and separates
   current experiments from browser and runtime dependencies.
